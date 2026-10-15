@@ -143,9 +143,17 @@ const probing = spawnSync('cmd', ['/c', 'set'], {
   timeout: 30000,
 })
 check('子进程能起来', probing.status === 0, `exit=${probing.status}`)
+const childProxyLines = (probing.stdout ?? '')
+  .split(/\r?\n/)
+  .filter((line) => /proxy=/i.test(line))
+console.log(`        子进程里的代理变量: ${JSON.stringify(childProxyLines)}`)
+// 不断言具体端口：如果本进程本来就继承了一个代理（比如测试跑在 dsh 之下），
+// `proxyEnvironmentForChild()` 会按设计把**继承来的值**原样透传，而不是我们
+// 刚装的那个 —— 这是上游明确的行为（「用户以任一大小写指定过的 scheme，
+// 会以他们书写的形式原样传给子进程」）。这里只要求它指向一个 loopback 代理。
 check(
-  '子进程读得到代理变量',
-  /^https?_proxy=http:\/\/127\.0\.0\.1:65000$/im.test(probing.stdout ?? ''),
+  '子进程读得到一个 loopback 代理',
+  childProxyLines.some((line) => /^https?_proxy=http:\/\/127\.0\.0\.1:\d+$/i.test(line)),
   '',
 )
 const childDupes = duplicatesIn(probing.stdout ?? '')
