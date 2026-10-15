@@ -239,6 +239,30 @@ async function enableProxy() {
 - **同一时间只支持一个 dsh 实例开这个代理**。核心配置、端口与 pid 文件都在 `$DSH_HOME/api-proxy/` 下按单实例设计：同时跑 `dsh web` 和 `dsh desktop` 并都打开开关，两者会互相抢端口、并在启动时按 pid 文件清理掉对方的核心。用哪个实例就只在那个实例里开。
 - **跑 `verify/host-sim.mjs` 之前要先把界面上的开关关掉**：它会按 pid 文件清理「孤儿」核心，而那个文件正属于你正在运行的核心。
 
+### 已知问题：dsh 的 pwsh / bash 工具里 `Get-ChildItem env:` 会报错
+
+开着代理时，dsh 派生的 shell 里执行 `Get-ChildItem env:` 或任何 .NET 的环境枚举会抛：
+
+```
+An item with the same key has already been added.
+```
+
+原因是环境块里同时存在 `https_proxy` 与 `HTTPS_PROXY` 两条记录。`dsh-http-proxy` 按设计**两种大小写一起写**（POSIX 上那是两个不同的变量，是对的），而 **Windows 环境变量大小写不敏感**，于是同一个变量出现两次。
+
+**实测范围：**
+
+| 位置 | 有重复键？ |
+|---|---|
+| dsh 进程自己 | 否 —— 插件在装/卸 dispatcher 后各压一次 |
+| dsh 派生的 shell（pwsh 工具） | **是** |
+| 用 Node `spawn` + 同样环境对象合成出来的子进程 | 否 |
+
+前两行是实测的。第三行说明去重发生在 Node 构建环境块那一步，真正产生重复的是 dsh 某条更底层的 spawn 路径 —— 我**没有定位到确切位置**，也没有从插件侧绕过它的办法（`proxyEnvironmentForChild()` 无条件写两种大小写，没有开关）。
+
+影响面很窄：按名字读变量的工具（git、curl、node、python）全都正常，只有**枚举整个环境**的消费者会炸。不想踩的话，别在 dsh 的 shell 里做环境枚举。
+
+`verify/env-dedupe.mjs` 只断言已证实的部分，不去猜没验证的根因。
+
 ## 排错
 
 | 现象 | 处理 |
