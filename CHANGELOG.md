@@ -12,6 +12,23 @@
 
 ---
 
+## [0.2.2] - 2026-10-15
+
+只改文档，**插件代码与 0.2.1 完全相同**。不需要升级。
+
+### 新增
+
+- **README 增加「常见域名集」一节** —— 把「要给某个服务挂梯子该填哪些域名」这件事写清楚。起因是实测给 GitHub 挂梯子时发现：只填 `github.com` 会漏掉 `raw.` 与 `objects.`，而 release 附件、raw 文件、头像全都走 `githubusercontent.com`；静态资源又在 `githubassets.com`。少了后两条，`git clone` 能过、**下载 release 会卡死**。表格里同时写了「怎么确认没漏」。
+
+### 变更
+
+- README 的「用法」第 3 步指向新的域名集一节。
+- 「实测数据」补一组 `github.com` 的对照：直连超时 vs 走代理 200 / 0.21 s，并记录了一个**反证** —— 同一时刻 `google.com` 走这个代理打不开，正说明它没被列进分流、按 `MATCH,DIRECT` 直连撞了墙。如果插件是「全都走代理」，google 反而会通。
+- README 里「用『测速并锁定最快』手动钉一个节点」这句已经过时（那个按钮在 0.2.0 去掉了），改成指向「⚡ 自动」。
+- `package.json` 的 `version` 补到 `0.2.2`（0.2.1 发布时漏了同步，它一直写着 0.2.0）。
+
+---
+
 ## [0.2.1] - 2026-10-15
 
 只动验证脚本，插件行为与 0.2.0 完全相同。
@@ -97,7 +114,8 @@
 
 ---
 
-[未发布]: https://github.com/hutaodog/dsh-api-proxy/compare/v0.2.1...HEAD
+[未发布]: https://github.com/hutaodog/dsh-api-proxy/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/hutaodog/dsh-api-proxy/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/hutaodog/dsh-api-proxy/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/hutaodog/dsh-api-proxy/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/hutaodog/dsh-api-proxy/releases/tag/v0.1.0

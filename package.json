@@ -1,6 +1,6 @@
 {
   "name": "dsh-api-proxy",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "DeepSeek Harness API 专用代理：导入 Clash 订阅，托管 mihomo 核心，只给指定 API 域名挂梯子。每次开启自动测速并连延迟最低的节点，可在设置里手动改选、开关免重启",
   "keywords": [
     "dsh",
