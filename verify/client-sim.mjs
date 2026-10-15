@@ -220,6 +220,8 @@ check(
 
 const registrations = []
 const boundNamespaces = []
+/** 绑定出来的作用域实例，用来断言界面写回了哪些设置。 */
+const scopeInstances = []
 
 /**
  * 假的绑定作用域。
@@ -282,7 +284,9 @@ const mockCtx = {
         settingsScope: {
           bind({ namespace, decode }) {
             boundNamespaces.push(namespace)
-            return new FakeSettingsScope(namespace, decode)
+            const instance = new FakeSettingsScope(namespace, decode)
+            scopeInstances.push(instance)
+            return instance
           },
         },
       })
@@ -365,6 +369,15 @@ function makeStatus(overrides = {}) {
       { name: '🇺🇸美国-A(通用)', type: 'tuic' },
       { name: '🇭🇰香港-B(流量)', type: 'hysteria2' },
     ],
+    autoPick: {
+      name: '🇯🇵东京-E(通用)',
+      delay: 93,
+      group: '🚀 节点选择',
+      tested: 45,
+      usable: 44,
+      at: '2026-10-15T08:00:00.000Z',
+    },
+    autoPicking: false,
     lastMessage: null,
     ...overrides,
   }
@@ -422,6 +435,9 @@ check('显示节点协议', text.includes('vless') || text.includes('tuic'))
 check('显示当前选中节点', text.includes('🇺🇸美国-A(通用)'))
 check('显示分流域名', text.includes('api.example.com'))
 check('说明其余直连', text.includes('一律直连'))
+check('节点列表里有「自动」这一项', text.includes('⚡ 自动（每次开启测速选最快）'))
+check('显示上次自动选择结果', text.includes('上次自动选择') && text.includes('93 ms'))
+check('说明当前是自动模式', text.includes('自动模式：每次开启（含 dsh 启动）都会重新测速'))
 console.log('')
 
 console.log('[3] 交互：测速')
@@ -441,15 +457,17 @@ check('界面显示延迟数字', afterDelay.includes('93 ms'))
 check('超时节点显示为超时', afterDelay.includes('超时'))
 console.log('')
 
-console.log('[4] 交互：锁定最快节点')
-const pickButton = findButton(rendered.tree, '测速并锁定最快')
-check('找到「测速并锁定最快」按钮', pickButton !== undefined)
-actionCalls.length = 0
-pickButton.props.onClick()
-await sleep(400)
-const selectCall = actionCalls.find((call) => call.action === 'select')
-check('会自动切到最快节点', selectCall !== undefined, JSON.stringify(selectCall))
-check('切的是 93ms 那个节点', selectCall?.node === '🇯🇵东京-E(通用)', String(selectCall?.node))
+console.log('[4] 「测速并锁定最快」已并入节点列表')
+// 旧版是一个独立按钮，会把「最快」直接写成固定选择 —— 于是用户再也回不到
+// 自动模式。现在它变成列表里可选的一项，与具体节点平级。
+check(
+  '不再有单独的「测速并锁定最快」按钮',
+  findButton(rendered.tree, '测速并锁定最快') === undefined,
+)
+check(
+  '改成列表里的「自动」项',
+  findButton(rendered.tree, '⚡ 自动（每次开启测速选最快）') !== undefined,
+)
 console.log('')
 
 console.log('[5] 交互：关闭开关')
@@ -462,7 +480,68 @@ await sleep(300)
 check('点了关闭会调 disable 接口', actionCalls.some((call) => call.action === 'disable'))
 console.log('')
 
-console.log('[6] 核心未装时的界面')
+console.log('[6] 交互：自动模式 vs 固定节点')
+const scopeInstance = scopeInstances[0]
+rendered = await renderAndSettle(runtime, Section, sectionProps)
+
+/** 按文本找节点列表里的那一行（它是 button）。 */
+function findNodeRow(tree, label) {
+  return findAll(
+    tree,
+    (node) => node.type === 'button' && textOf(node).includes(label),
+  )[0]
+}
+
+// --- 点具体节点 => 固定模式 ---
+actionCalls.length = 0
+const japanRow = findNodeRow(rendered.tree, '🇯🇵东京-E(通用)')
+check('找得到具体节点那一行', japanRow !== undefined)
+japanRow.props.onClick()
+await sleep(300)
+check('点节点会调 select 接口', actionCalls.some((call) => call.action === 'select'))
+check(
+  '把节点名写进 targetNode（固定模式）',
+  scopeInstance.doc.targetNode === '🇯🇵东京-E(通用)',
+  String(scopeInstance.doc.targetNode),
+)
+
+// 固定模式下，界面必须说明「下次开启仍用它」，而不是说会自动测速。
+rendered = await renderAndSettle(runtime, Section, sectionProps)
+const fixedText = textOf(rendered.tree)
+check('固定模式有对应说明', fixedText.includes('固定模式：每次开启都连'), '')
+check('固定模式不再宣称自动测速', !fixedText.includes('自动模式：每次开启'))
+
+// --- 点「自动」那一行 => 清空 targetNode 并立刻测速 ---
+actionCalls.length = 0
+const autoRow = findNodeRow(rendered.tree, '⚡ 自动（每次开启测速选最快）')
+check('找得到「自动」那一行', autoRow !== undefined)
+autoRow.props.onClick()
+await sleep(400)
+check('点「自动」会调 autopick 接口', actionCalls.some((call) => call.action === 'autopick'))
+check(
+  '把 targetNode 清空（回到自动模式）',
+  scopeInstance.doc.targetNode === '',
+  JSON.stringify(scopeInstance.doc.targetNode),
+)
+rendered = await renderAndSettle(runtime, Section, sectionProps)
+check('切回自动模式的说明', textOf(rendered.tree).includes('自动模式：每次开启'))
+
+// --- 自动模式下点开启：界面**不能**把选中的节点写回 targetNode ---
+// 写回去就等于把模式从「自动」悄悄改成「固定」。
+actionCalls.length = 0
+const onButton = findButton(rendered.tree, '开启')
+check('找到「开启」按钮', onButton !== undefined)
+onButton.props.onClick()
+await sleep(400)
+check('点了开启会调 enable 接口', actionCalls.some((call) => call.action === 'enable'))
+check(
+  '自动模式下开启后 targetNode 仍是空的',
+  scopeInstance.doc.targetNode === '',
+  JSON.stringify(scopeInstance.doc.targetNode),
+)
+console.log('')
+
+console.log('[7] 核心未装时的界面')
 statusPayload = makeStatus({
   core: { state: 'stopped', error: null, version: null, path: 'C:/x/mihomo.exe', installed: false },
   proxy: { installed: false, port: null, url: null },
@@ -479,7 +558,7 @@ check('没有节点区块时不崩', !text2.includes('这个分组没有成员')
 check('开启按钮可用', findButton(rendered2.tree, '开启') !== undefined)
 console.log('')
 
-console.log('[7] 兜底：scope 缺席时也不该整块空白')
+console.log('[8] 兜底：scope 缺席时也不该整块空白')
 const noScopeTree = runtime2.render(registrations[0].Component, {}).tree
 const fallbackInner = noScopeTree.children[0]
 check('入口在 scope 缺席时仍给出组件', fallbackInner !== undefined && fallbackInner.props.scope !== undefined)

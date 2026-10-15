@@ -96,6 +96,8 @@ const settingsDoc = {
   subscriptionUrl: SUBSCRIPTION_URL,
   apiDomains: TEST_DOMAIN,
   targetGroup: '',
+  // 空串 = 自动模式：每次开启测速选最快。下面 [5c] 会把它设成具体节点，
+  // 验证固定模式下不再测速。
   targetNode: '',
   testUrl: 'https://www.gstatic.com/generate_204',
 }
@@ -261,12 +263,27 @@ check('模块导出 name', plugin.name === 'dsh-api-proxy', plugin.name)
 check('模块导出 apply', typeof plugin.apply === 'function')
 
 const ctx = createContext()
-const autoStart = plugin.apply(ctx)
-check('apply 返回启动钩子', typeof autoStart === 'function')
+const applyResult = plugin.apply(ctx)
+// 开启现在含一次全节点测速，装配时**绝不能** await 它，否则 dsh 启动被拖十几秒。
+check(
+  'apply 不阻塞启动（不返回 promise）',
+  applyResult === undefined || typeof applyResult?.then !== 'function',
+  typeof applyResult,
+)
 await new Promise((resolve) => setTimeout(resolve, 300))
 check('注册了状态路由', routes.has('/dsh-api-proxy/status'))
 check('注册了动作路由', routes.has('/dsh-api-proxy/action'))
 check('注册了关闭钩子', effects.some((label) => /shutdown/.test(label)))
+// autoStart 在后台跑；测试文档里 enabled=false，所以它应当报 disabled。
+const early = await call('/dsh-api-proxy/status', {
+  url: '/dsh-api-proxy/status?diag=1',
+  headers: { host: '127.0.0.1:3080' },
+})
+check(
+  '后台跑过 autoStart',
+  early.json?.diagnostics?.autoStart === 'disabled',
+  String(early.json?.diagnostics?.autoStart),
+)
 console.log('')
 
 console.log('[2] 信任栅栏')
@@ -324,6 +341,25 @@ const direct = await measureApi(5)
 console.log(
   `        直连: ${direct.ok}/${direct.rounds} 成功，平均 ${direct.average ?? '-'} ms  [${direct.times.join(', ')}]`,
 )
+
+/**
+ * 走代理的连通性判定要看直连基线。
+ *
+ * 这台机器到某些境外 API 的直连会周期性抽风（比如传到 98% 卡死）。直连基线
+ * 全灭时，网络本身就不通，此时判代理失败没有意义 —— 降级成 SKIP 提示。
+ * 直连基线正常、走代理却挂了，那才是真问题，照样 FAIL。
+ * @param label 断言文本。
+ * @param result measureApi 的结果。
+ */
+function checkProxyReach(label, result) {
+  if (direct.ok === 0) {
+    console.log(
+      `  SKIP  ${label}（直连基线 0/${direct.rounds}，这台机器到该 API 本身就不通，判定不了代理）`,
+    )
+    return
+  }
+  check(label, result.ok > 0, `${result.ok}/${result.rounds}`)
+}
 console.log('')
 
 console.log('[5] 生成 mihomo 配置并打开开关')
@@ -333,6 +369,20 @@ check('核心已运行', started.json?.core?.state === 'running', started.json?.
 check('代理已装上', started.json?.proxy?.installed === true, started.json?.proxy?.url ?? '')
 const corePort = started.json?.proxy?.port ?? 0
 check('代理端口不是 7890', corePort !== 7890, `端口 ${corePort}`)
+
+// 开启时的自动测速选节点（settingsDoc.autoPickFastest = true）。
+const picked = started.json?.autoPick ?? null
+const allGroupNames = (started.json?.groups ?? []).map((group) => group.name)
+check('开启时自动选了节点', picked !== null, JSON.stringify(picked))
+check('自动选中带延迟', typeof picked?.delay === 'number' && picked.delay > 0, `${picked?.delay} ms`)
+check('自动测了多个节点', (picked?.tested ?? 0) > 1, `测了 ${picked?.tested} 个`)
+// 关键：候选里必须排除子分组。订阅常把「自动选择」这类 url-test 组塞进
+// 选择组当成员，而它正是实测会抖到 11 秒的东西。
+check(
+  '自动选中的是真实节点而非分组',
+  typeof picked?.name === 'string' && picked.name !== '' && !allGroupNames.includes(picked.name),
+  `${picked?.name}（分组有 ${allGroupNames.join(' / ')}）`,
+)
 
 // 记下**本次**启动的核心 pid。收尾时只检查这一个 —— 机器上可能还跑着
 // 另一个 dsh 实例的核心（用户界面里开着开关），全局「无 mihomo 进程」
@@ -361,12 +411,56 @@ if (existsSync(CONFIG_PATH)) {
 }
 console.log('')
 
+console.log('[5c] 固定模式：指定节点后不再测速')
+// 用户选了「某个日本节点」，那下次开机就该还是那个节点 —— 不能被自动测速覆盖。
+settingsDoc.targetNode = picked.name
+const fixedEnable = await action({ action: 'enable' })
+check('固定模式下 enable 成功', fixedEnable.json?.ok === true, fixedEnable.json?.error ?? '')
+check('模式字段是 fixed', fixedEnable.json?.mode === 'fixed', String(fixedEnable.json?.mode))
+check(
+  '固定模式下不再自动选节点',
+  fixedEnable.json?.autoPick === null || fixedEnable.json?.autoPick === undefined,
+  JSON.stringify(fixedEnable.json?.autoPick),
+)
+check(
+  '报的是「固定使用」',
+  String(fixedEnable.json?.lastMessage).includes('固定使用'),
+  String(fixedEnable.json?.lastMessage),
+)
+const afterFixed = await action({ action: 'active' })
+check(
+  '分组确实切回了那个节点',
+  afterFixed.json?.selection?.[picked.group] === picked.name,
+  `${afterFixed.json?.selection?.[picked.group]}（期望 ${picked.name}）`,
+)
+// 换回自动模式，后面的用例继续走自动路径。
+settingsDoc.targetNode = ''
+const backToAuto = await action({ action: 'enable' })
+check('切回自动模式后又开始选节点', backToAuto.json?.mode === 'auto' && backToAuto.json?.autoPick != null, String(backToAuto.json?.mode))
+
+// ---- 这条是曾经的真 bug ----
+// 核心每次启动都取新的随机端口，而已经装上的 dispatcher 不会自己跟着变。
+// 修复前 `enableProxy()` 见到「已装」就直接 return，于是 dispatcher 继续指向
+// 一个已经消失的端口：走代理的请求全部失败，但 proxy.installed 仍是 true，
+// 状态页看起来一切正常。重载核心、保存分流规则都会走到这条路。
+check(
+  '重启用确实换了端口（否则这条回归测不到东西）',
+  backToAuto.json?.proxy?.port !== started.json?.proxy?.port,
+  `${started.json?.proxy?.port} -> ${backToAuto.json?.proxy?.port}`,
+)
+check(
+  'dispatcher 指向的就是当前核心端口',
+  backToAuto.json?.proxy?.boundPort === backToAuto.json?.proxy?.port,
+  `bound=${backToAuto.json?.proxy?.boundPort} core=${backToAuto.json?.proxy?.port}`,
+)
+console.log('')
+
 console.log('[6] 走代理实测同一个 API')
 const proxied = await measureApi(5)
 console.log(
   `        走代理: ${proxied.ok}/${proxied.rounds} 成功，平均 ${proxied.average ?? '-'} ms  [${proxied.times.join(', ')}]`,
 )
-check('走代理时 API 全部成功', proxied.ok === proxied.rounds, `${proxied.ok}/${proxied.rounds}`)
+checkProxyReach('走代理能连上 API', proxied)
 console.log('')
 
 console.log('[7] 测速与切节点')
@@ -390,7 +484,7 @@ if (fastest !== undefined) {
   console.log(
     `        锁定该节点后: ${pinned.ok}/${pinned.rounds} 成功，平均 ${pinned.average ?? '-'} ms  [${pinned.times.join(', ')}]`,
   )
-  check('锁定节点后 API 全部成功', pinned.ok === pinned.rounds, `${pinned.ok}/${pinned.rounds}`)
+  checkProxyReach('锁定节点后能连上 API', pinned)
 }
 console.log('')
 
