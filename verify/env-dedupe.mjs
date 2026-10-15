@@ -145,7 +145,7 @@ const probing = spawnSync('cmd', ['/c', 'set'], {
 check('子进程能起来', probing.status === 0, `exit=${probing.status}`)
 check(
   '子进程读得到代理变量',
-  /(?i)^https?_proxy=http:\/\/127\.0\.0\.1:65000$/m.test(probing.stdout ?? ''),
+  /^https?_proxy=http:\/\/127\.0\.0\.1:65000$/im.test(probing.stdout ?? ''),
   '',
 )
 const childDupes = duplicatesIn(probing.stdout ?? '')
