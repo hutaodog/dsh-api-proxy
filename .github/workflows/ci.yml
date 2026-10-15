@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  offline-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # client-sim 完全离线（假 ctx + 假 react + 假 fetch），不需要订阅也不需要核心。
+      - name: 客户端渲染与交互
+        run: node verify/client-sim.mjs
+
+      # 语法与模块面检查：host 侧不能在没有 dsh 的机器上跑完整链路，
+      # 但能确认模块可加载、纯函数与路由表存在。
+      - name: 宿主模块可加载
+        run: node -e "import('./lib/index.js').then(m => { if (m.name !== 'dsh-api-proxy') throw new Error('name 不对'); if (typeof m.apply !== 'function') throw new Error('缺 apply'); console.log('ok'); })"

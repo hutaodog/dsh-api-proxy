@@ -1,0 +1,23 @@
+node_modules/
+dist/
+*.log
+
+# 运行时产生的本地数据（正常情况下不会出现在这里，防手滑）
+mihomo.exe
+mihomo
+config.yaml
+subscription.yaml
+nodes.json
+mihomo.pid
+mihomo.zip
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 千万别把订阅地址提交上来
+.env
+.env.*

@@ -1,0 +1,35 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 离线验证
+        run: node verify/client-sim.mjs
+
+      - name: 打包
+        run: |
+          mkdir -p dist
+          zip -r "dist/dsh-api-proxy-${GITHUB_REF_NAME}.zip" . \
+            -x '.git/*' 'dist/*' '.github/*' 'node_modules/*' '*.log'
+
+      - name: 发布
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/*.zip \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes

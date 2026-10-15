@@ -1,0 +1,54 @@
+{
+  "name": "dsh-api-proxy",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness API 专用代理：导入 Clash 订阅，托管 mihomo 核心，只给指定 API 域名挂梯子，可在设置里测速、选节点、开关（免重启）",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "proxy",
+    "clash",
+    "mihomo",
+    "subscription",
+    "socks5",
+    "vpn"
+  ],
+  "author": "hutaodog",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hutaodog/dsh-api-proxy.git"
+  },
+  "homepage": "https://github.com/hutaodog/dsh-api-proxy#readme",
+  "bugs": {
+    "url": "https://github.com/hutaodog/dsh-api-proxy/issues"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
