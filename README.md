@@ -18,15 +18,33 @@
 
 需要 DeepSeek Harness（`dsh` 命令可用）与 Node 20+。目前**核心二进制自动下载只支持 Windows**（其它平台手动放一个 mihomo 到 `$DSH_HOME/api-proxy/` 即可）。
 
+**方式一：从 Releases 下载**（不用装 git）
+
+到 [Releases](https://github.com/hutaodog/dsh-api-proxy/releases) 下载最新那个 zip，解压到任意目录，然后：
+
+```powershell
+dsh plugin --profile web add link:<解压出来的绝对路径>
+```
+
+**方式二：克隆仓库**
+
 ```powershell
 git clone https://github.com/hutaodog/dsh-api-proxy
 dsh plugin --profile web add link:<克隆下来的绝对路径>
 ```
 
-然后**重启 `dsh web`** 并刷新页面。插件声明了 `dsh.client`，必须进 boot graph，热装不生效。
+两种方式装完都要**重启 `dsh web`** 并刷新页面。插件声明了 `dsh.client`，必须进 boot graph，热装不生效。
+
+本插件**零 npm 依赖**（`js-yaml`、`schemastery`、`dsh-http-proxy` 都从 dsh 安装目录里借用），所以安装很快。
 
 > 若 `pnpm` 报 `ERR_PNPM_UNEXPECTED_STORE`（改过 pnpm store 位置），加一个一次性的
-> `--store-dir` 指向 node_modules 当前链接的那个 store 即可；本插件零依赖，装起来很快。
+> `--store-dir` 指向 `node_modules` 当前链接的那个 store 即可。
+
+装好后在 profile 的 `package.json` 里确认 `dsh.profile.bundles` 含 `dsh-api-proxy` —— `dsh plugin add` 有时只写 dependencies，不写 bundles：
+
+```json
+"dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "dsh-api-proxy"] } }
+```
 
 ## 用法
 
