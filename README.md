@@ -1,0 +1,370 @@
+# dsh-api-proxy
+
+给 DeepSeek Harness 的 **API 请求单独挂梯子**。
+
+在本机跑一个 mihomo 核心，只把你在设置里列的域名送去代理，**其余流量一律直连**。不开 TUN、不要管理员权限、不装驱动、不改系统代理设置 —— 系统里其它软件完全不受影响。
+
+设置入口：**设置 → API 代理**。更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+
+---
+
+## 为什么不是「直接开全局梯子」
+
+- **不碰系统**：mihomo 只监听 `127.0.0.1` 的一个随机端口，走的是普通 HTTP 代理协议。不需要 WinTUN 驱动，不需要管理员权限，关掉 DSH 就什么都没了。
+- **只代理该代理的**：网页抓取、联网搜索、HTTP MCP 全部保持直连。只有你列出的 API 域名走梯子。
+- **不用常开**：DSH 起来它才起来。
+
+## 安装
+
+需要 DeepSeek Harness（`dsh` 命令可用）与 Node 20+。目前**核心二进制自动下载只支持 Windows**（其它平台手动放一个 mihomo 到 `$DSH_HOME/api-proxy/` 即可）。
+
+**方式一：从 Releases 下载**（不用装 git）
+
+到 [Releases](https://github.com/hutaodog/dsh-api-proxy/releases) 下载最新那个 zip，解压到任意目录，然后：
+
+```powershell
+dsh plugin --profile web add link:<解压出来的绝对路径>
+```
+
+**方式二：克隆仓库**
+
+```powershell
+git clone https://github.com/hutaodog/dsh-api-proxy
+dsh plugin --profile web add link:<克隆下来的绝对路径>
+```
+
+两种方式装完都要**重启 `dsh web`** 并刷新页面。插件声明了 `dsh.client`，必须进 boot graph，热装不生效。
+
+本插件**零 npm 依赖**（`js-yaml`、`schemastery`、`dsh-http-proxy` 都从 dsh 安装目录里借用），所以安装很快。
+
+> 若 `pnpm` 报 `ERR_PNPM_UNEXPECTED_STORE`（改过 pnpm store 位置），加一个一次性的
+> `--store-dir` 指向 `node_modules` 当前链接的那个 store 即可。
+
+装好后在 profile 的 `package.json` 里确认 `dsh.profile.bundles` 含 `dsh-api-proxy` —— `dsh plugin add` 有时只写 dependencies，不写 bundles：
+
+```json
+"dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "dsh-api-proxy"] } }
+```
+
+## 用法
+
+1. 设置 → API 代理 → **下载核心**（zip 约 21 MB，解压后约 58 MB；从 GitHub 下载，失败会自动换国内镜像）
+2. 填**订阅地址** → 「保存并刷新」
+3. 在「**分流**」里填要挂梯子的域名 → 「保存并应用」（拿不准填什么，看下面的[常见域名集](#常见域名集)）
+4. 在**节点列表**里选一个：最上面是「⚡ 自动」，下面是具体节点
+5. 点「**开启**」
+
+之后每次 dsh 启动都会自动重复第 5 步 —— 拉起核心、按你选的模式确定节点、挂上代理。
+
+### 两种节点模式（就看「选了什么」）
+
+节点列表里选的**就是模式**，没有额外的开关：
+
+| 你选的 | 模式 | 每次开启（含 dsh 启动）会做什么 |
+|---|---|---|
+| **⚡ 自动（每次开启测速选最快）** | 自动 | 重新测速，切到延迟最低的节点 |
+| **某个具体节点**（如 🇯🇵日本-B） | 固定 | 每次都连它，**不测速、不覆盖** |
+
+选具体节点就一直是那个节点 —— 想要「稳定走日本」就选日本，插件不会自作主张换掉它。
+
+自动模式的细节：
+
+- 走 mihomo 自带的 `/group/<分组>/delay`，所有成员**并发**测，5 秒超时。
+- **只返回答上来的节点**。所以「测了 20 个」不代表分组只有 20 个成员，而是只有 20 个在 5 秒内响应 —— 网络差的时候这个数会掉到 5~6 个。界面上会同时显示「测了 X 个 / 可用 Y 个」。
+- **候选里排除子分组**。订阅常把「自动选择」这类 `url-test` 组塞进选择组当成员，它往往还测得最快 —— 但不能自动选它：`url-test` 组会在会话中途重新测速并换节点，那会直接掐断正在流式的 LLM 响应。
+- 想手动用订阅自己的「自动选择」组？在列表里点它就行 —— 那会变成**固定**模式，每次开启都把它交给 mihomo 的 url-test 决定。这是你自己的选择，插件不替你拦。
+
+### 分流
+
+**默认什么都不代理** —— 本插件不预设任何服务商，你得自己填域名。留空时核心规则只剩 `MATCH,DIRECT`，界面会明确提示。
+
+填了 `api.example.com` 之后，生成的核心规则就两条：
+
+```yaml
+rules:
+  - DOMAIN-SUFFIX,api.example.com,🚀 节点选择
+  - MATCH,DIRECT
+```
+
+`DOMAIN-SUFFIX` 连子域名一起匹配，所以填 `example.com` 也能覆盖 `api.example.com`。多个域名一行一个。
+
+订阅自带的 600+ 条规则（结尾是 `MATCH,节点选择`，即「国内直连、其余全代理」）会被**整个丢弃** —— 那跟本插件的目标正好相反。
+
+#### 常见域名集
+
+一个服务往往散在好几个域名上，**只填主域名会漏**。下面这些是实测过的：
+
+| 要给谁挂梯子 | 填这些 | 为什么 |
+|---|---|---|
+| **GitHub** | `github.com`<br>`githubusercontent.com`<br>`githubassets.com` | 一条 `github.com` 已覆盖 `api.` / `codeload.` / `gist.` / `ssh.` 等所有子域，但 **`raw.` / `objects.` 在 `githubusercontent.com` 上**（release 附件、raw 文件、头像都走它），静态资源又在 `githubassets.com`。少了后面两条，`git clone` 能过、下载 release 会卡死。 |
+| 某个境外 API | 它的 `baseURL` 的域名，比如 `api.example.com` 或 `example.com` | 拿不准就填后缀形式（`example.com`），覆盖更宽 |
+
+怎么确认没漏：开着代理访问一次，然后看 `$DSH_HOME/api-proxy/mihomo.log`；或者干脆 `curl -x http://127.0.0.1:<端口> <url>` 对比直连。
+
+改完点「**保存并应用**」，核心会重载，**不用重启 dsh**。
+
+---
+
+## 可选：接入机场「App 专属」节点
+
+> **默认关闭。** 不开这一节的功能，插件行为与之前完全一致。
+
+有些机场会把一部分节点做成「只有官方 App 能用」。订阅接口按 `User-Agent` 分流：
+普通客户端 UA 拿到一份节点表，带机场 App 的 UA 拿到的**是另一份更大、且加了密
+的配置**。多出来的那些节点传输层是机场自己改的私有实现，
+**mihomo / sing-box / Xray 都握不上手** —— 不是被限制，是协议根本对不上。
+
+打开「**专属节点（本机内核）**」后，插件会：
+
+1. 用机场 App 的 UA 拉取那份加密配置，解出完整节点表；
+2. 把**机场自己的内核**（随 App 安装的那个 DLL）**单独加载起来**，喂进配置；
+3. **给每个专属节点各开一个本机入口**，再把它们当成普通节点并进策略组。
+
+## 实测数据（作者本机，2026-10-15）
+
+量的是一个 Cloudflare 后面的境外 API，每次新建连接并读完整 body。
+
+**关键结论：这条直连路径的质量随时间剧烈变化 —— 这才是要挂代理的理由。**
+
+同一天里量到的直连：
+
+| 时刻 | 成功率 | 平均耗时 | 波动 |
+|---|---|---|---|
+| 关掉全局 TUN 后立刻 | **2/5**（3 次卡死超时） | — | 一次传到 7.4 KB 就断 |
+| 半小时后 | 5/5 | 627 ms | 290 – 1339 ms（**4.6 倍**） |
+| 又过一阵 | 5/5 | 419 ms | 407 – 428 ms |
+| 插件挂上之后 | 5/5 | 218 ms | 206 – 232 ms（1.1 倍） |
+
+同一时间的代理（锁定节点）：
+
+| 节点 | 成功率 | 平均耗时 | 波动 |
+|---|---|---|---|
+| 🇯🇵日本-B(通用) — tuic | 6/6 | 217 ms | 199 – 251 ms（1.3 倍） |
+| 🇯🇵日本-A(通用) | 5/5 | 333 ms | 283 – 503 ms |
+| 🇯🇵东京-E(通用) | 5/5 | 582 ms | 538 – 637 ms |
+| **auto 组（url-test）** | 5/5 | 2515 ms | 有一次 **11.4 秒** |
+
+**读法：** 代理的延迟取决于你钉哪个节点（日本-B 是 217 ms，和直连最好时持平；换成东京-E 就是 582 ms）。所以代理的价值不是「一定更快」，而是**这条路径由你控制、不随网络抽风**——直连今天能在 3/5 超时和 218 ms 之间反复横跳，代理不会。
+
+**不要用订阅自带的自动选择组。** 实测那个 url-test 组会出现 11 秒的抖动。选列表最上面的「⚡ 自动」，插件会在**真实节点**里测速选最快，并把它钉住。
+
+### 同一天晚些时候：github.com
+
+`github.com` 被墙住时量的（同一台机器、同一个订阅）：
+
+| | 结果 |
+|---|---|
+| 直连 | **超时**（15 s 收不到任何字节） |
+| 走代理（🇯🇵日本-A，85 ms） | **200 / 0.21 s** |
+
+同一个代理、同一时刻，`api.commandcode.ai` 也量到 200 / 0.21 s。**两个域名共用一个节点，互不影响** —— 分流列了哪个，哪个才走。
+
+顺带验证了分流是准的：同一时刻 `google.com` 走这个代理**打不开**（它没被列进分流，`MATCH,DIRECT` 让它直连、然后撞墙）。如果插件是「全都走代理」，google 反而会通。
+
+随时可复测（代理开着的时候）：
+
+```powershell
+node verify\compare.mjs
+```
+
+---
+
+## 设计要点
+
+```
+┌─ dsh web 宿主进程 ────────────────────────────────────┐
+│  dsh-api-proxy 插件                                    │
+│   ├ 设置命名空间 api-proxy（设置文档）                 │
+│   ├ 拉订阅（带 Clash UA）→ 解析 YAML → 缓存节点        │
+│   ├ 生成 mihomo 配置（覆盖端口 + 规则）                │
+│   ├ 托管 mihomo 子进程（随 dsh 启停、崩溃自动卸代理）  │
+│   ├ 调 external-controller REST API → 切节点 / 测延迟  │
+│   └ installProxyFromEnvironment() ← 热装 / 热卸        │
+│  web server: /dsh-api-proxy/*（自带 loopback 栅栏）    │
+└────────────────────────────────────────────────────────┘
+              │ HTTP CONNECT → 127.0.0.1:<随机端口>
+              ▼
+      mihomo（非 TUN）
+```
+
+### 开关免重启是怎么做到的
+
+DSH 的 `@deepseek-ai/dsh-http-proxy` 把策略做成「启动时装一次」：启动器在第一个插件加载前调用 `installProxyFromEnvironment()`，装上 undici 的全局 dispatcher。
+
+但那个函数**是公开导出，且返回一个卸载器**。实测可以在进程运行时反复调用：
+
+| 步骤 | 经过假代理的请求数 | |
+|---|---|---|
+| 基线直连 | 0 | PASS |
+| 运行时装入策略 | 1 | PASS |
+| 运行时卸载 | 0 | PASS |
+
+所以开关直接换 dispatcher，**不需要重启 dsh**。
+
+> 需要注意：这是该包未文档化的用法（它明确说自己「每进程只有一个答案」）。探针在 `verify/` 里，哪天上游改了行为会先在那里失败。
+
+### 踩过的三个坑（离线测试抓不到，真机上才暴露）
+
+**1. 设置页整块空白 —— `scope` 的原型方法不能裸传。**
+
+`ctx.settingsScope.bind({ namespace, decode })` 返回的是 `new SettingsScopeController(...)` —— 一个**类实例**，`subscribe` 与 `getSnapshot` 都是**原型方法**。
+
+```js
+// 错：丢掉 this，React 一调用就抛 TypeError，界面只剩导航项
+react.useSyncExternalStore(scope.subscribe, scope.getSnapshot)
+
+// 对：箭头函数包一层，并用 useCallback 固定身份
+const subscribe = react.useCallback((l) => scope.subscribe(l), [scope])
+const getSnapshot = react.useCallback(() => scope.getSnapshot(), [scope])
+react.useSyncExternalStore(subscribe, getSnapshot)
+```
+
+`verify/client-sim.mjs` 里的假 scope **刻意写成类**：用对象字面量（箭头函数属性）做假对象不会复现这个 bug。
+
+**2. 失败的动作报告成功 —— `snapshot()` 的 `ok` 覆盖了错误分支的 `ok`。**
+
+```js
+// 错：snapshot() 自带 `ok: true`，展开时把前面的 false 盖掉
+sendJson(res, 200, { ok: false, error: message, ...snapshot() })
+
+// 对：展开在前，判定在后
+sendJson(res, 200, { ...snapshot(), ok: false, error: message })
+```
+
+**3. dispatcher 指向一个已经消失的端口 —— 重载核心后代理静默失效。**
+
+核心每次启动都取**新的随机端口**，但已经装上的 dispatcher 不会自己跟着变。
+
+```js
+// 错：见到「已装」就直接返回，端口换了也不重装
+async function enableProxy() {
+  if (disposeProxy !== null) return
+  ...
+}
+
+// 对：端口变了就重装
+async function enableProxy() {
+  if (disposeProxy !== null && runtime.proxyPort === runtime.mixedPort) return
+  if (disposeProxy !== null) await disableProxy()
+  ...
+}
+```
+
+症状极其隐蔽：走代理的请求**全部**失败，但 `proxy.installed` 还是 `true`、状态页一片绿。点「保存并应用」分流规则（内部走 `reload`）就会踩到。
+
+现在所有「换一个核心进程」的路径都走同一个 `restartCore()`，回归断言在 `verify/host-sim.mjs` 的 `[5c]`：先断言「重启用确实换了端口」（否则测试本身失效），再断言 `proxy.boundPort === proxy.port`。
+
+### 安全
+
+- **核心只监听 loopback**，`allow-lan: false`、`bind-address: 127.0.0.1`。订阅里原本是 `allow-lan: true` + `bind-address: '*'`，照抄会把代理暴露到局域网。
+- **插件路由自带信任栅栏**：这些路由挂在 harness 的 web server 上，但**不在它的 `/api` 栅栏覆盖范围内**。插件自己校验 Host 必须是 loopback（挡 DNS rebinding），带 Origin 的请求其 Origin 也必须是 loopback（挡任意网页发起的跨站请求）。
+- **订阅地址存在本机设置文档里**（`$DSH_HOME/settings.yaml` 的 `api-proxy:` 段），明文。它含你的账号令牌。没有用 `role('secret')` 是因为那样设置页就永远读不回这个值、没法编辑。
+- **节点列表不落浏览器**：界面只拿到节点名和协议，节点凭据（uuid / password）留在宿主生成的配置里。
+- **不给子进程传代理变量**：核心子进程启动时清掉了 `HTTP_PROXY` 等，否则它会绕回自己。
+
+---
+
+## 已知限制
+
+- **只支持 Windows 自动下载核心**。其它平台要手动把 mihomo 放到 `$DSH_HOME/api-proxy/`。
+- **只支持 Clash / mihomo 格式的订阅**。base64 的 v2ray 订阅要先转换。
+- **订阅拉取要求机场认 Clash 系 User-Agent**。本插件带的是 `clash-verge/v2.0.0`。实测不带 UA 时有些机场返回空响应。
+- **不代理 worker 里的代码**。DSH 的 `code-runtime` 与 `workflow` worker 拿不到代理配置（上游设计如此），它们自身的网络请求仍然直连。
+- **`web_fetch` / 联网搜索默认直连**。这是「只代理 API」的必然结果。要它们也走代理，得把目标域名加进分流规则。
+- **遥测直连**。DSH 的 OTLP 导出器走 `node:http`，全局 dispatcher 够不到（上游设计如此）。
+- **改分流规则会重载核心**，正在跑的请求会断。
+- **自动测速只覆盖「答得上来的」节点**。5 秒没响应的节点会被算作不可用并从候选里去掉 —— 网络差的时候可能只剩 5~6 个候选。这不是 bug，但它意味着「最快」是在**当时可达的那批**里最快。
+- **自动测速会给开启增加几秒**。45 个节点并发测、5 秒超时，通常 5~8 秒出结果。加长测速超时能覆盖更多节点，代价是开启更慢。
+- **自动测速不会选子分组**。见上面「两种节点模式」一节：`url-test` 组会在会话中途换节点，掐断流式响应。手动选它可以，自动不会。
+- **固定模式下不测速**。选了一个具体节点就每次都连它 —— 哪怕它当时很慢或者已经挂了。这是刻意的：你的选择优先于插件的判断。想让它自己挑，选列表最上面的「⚡ 自动」。
+- **同一时间只支持一个 dsh 实例开这个代理**。核心配置、端口与 pid 文件都在 `$DSH_HOME/api-proxy/` 下按单实例设计：同时跑 `dsh web` 和 `dsh desktop` 并都打开开关，两者会互相抢端口、并在启动时按 pid 文件清理掉对方的核心。用哪个实例就只在那个实例里开。
+- **跑 `verify/host-sim.mjs` 之前要先把界面上的开关关掉**：它会按 pid 文件清理「孤儿」核心，而那个文件正属于你正在运行的核心。
+
+### 已知问题：dsh 的 pwsh / bash 工具里 `Get-ChildItem env:` 会报错
+
+开着代理时，dsh 派生的 shell 里执行 `Get-ChildItem env:` 或任何 .NET 的环境枚举会抛：
+
+```
+An item with the same key has already been added.
+```
+
+原因是环境块里同时存在 `https_proxy` 与 `HTTPS_PROXY` 两条记录。`dsh-http-proxy` 按设计**两种大小写一起写**（POSIX 上那是两个不同的变量，是对的），而 **Windows 环境变量大小写不敏感**，于是同一个变量出现两次。
+
+**实测范围：**
+
+| 位置 | 有重复键？ |
+|---|---|
+| dsh 进程自己 | 否 —— 插件在装/卸 dispatcher 后各压一次 |
+| dsh 派生的 shell（pwsh 工具） | **是** |
+| 用 Node `spawn` + 同样环境对象合成出来的子进程 | 否 |
+
+前两行是实测的。第三行说明去重发生在 Node 构建环境块那一步，真正产生重复的是 dsh 某条更底层的 spawn 路径 —— 我**没有定位到确切位置**，也没有从插件侧绕过它的办法（`proxyEnvironmentForChild()` 无条件写两种大小写，没有开关）。
+
+影响面很窄：按名字读变量的工具（git、curl、node、python）全都正常，只有**枚举整个环境**的消费者会炸。不想踩的话，别在 dsh 的 shell 里做环境枚举。
+
+`verify/env-dedupe.mjs` 只断言已证实的部分，不去猜没验证的根因。
+
+## 排错
+
+| 现象 | 处理 |
+|---|---|
+| 设置页显示「读不到宿主状态」 | 插件没进 boot graph。确认 profile 的 `dsh.` `profile.bundles` 里有 `dsh-api-proxy`，并**重启** `dsh web` |
+| 点开启报「订阅返回空内容」 | 链接过期，或机场不认当前 UA |
+| 点开启报「订阅里没有 proxies」 | 不是 Clash/mihomo 格式的订阅 |
+| 核心状态「异常」 | 看 `$DSH_HOME/api-proxy/mihomo.log` |
+| 节点全部测速超时 | tuic / hysteria2 是 QUIC/UDP 协议，这条线路可能对 UDP 不友好；试试 vless 节点 |
+| API 还是不通 | 确认分流规则里的域名对得上你的 `baseURL` |
+
+自检端点：
+
+```powershell
+curl.exe "http://127.0.0.1:3080/dsh-api-proxy/status"
+curl.exe "http://127.0.0.1:3080/dsh-api-proxy/status?diag=1"
+```
+
+## 离线验证
+
+`host-sim` 需要一个**你自己的**订阅地址（仓库里不含任何订阅）：
+
+```powershell
+$env:DSH_PROXY_TEST_SUB = 'https://你的机场/订阅地址'
+node verify\host-sim.mjs     # 36 项：真拉订阅、真起核心、真装 dispatcher、真测速切节点、失败动作必须报 ok=false
+node verify\client-sim.mjs   # 56 项：假 ctx 下渲染设置页并点击交互（假 scope 刻意写成类实例）
+node verify\compare.mjs      # 直连 vs 走代理的实测对比（需要代理已开启）
+node verify\nanocore-sim.mjs # 18 项：真拉专属订阅、真探测密钥、真起厂商内核、真发请求
+```
+
+可选环境变量：`DSH_PROXY_TEST_DOMAIN`（默认 `example.com`）、`DSH_PROXY_TEST_API`（量速度用的 URL）、`DSH_ROOT`（找不到 dsh 安装目录时手工指定）。
+
+`client-sim` 完全离线，不需要订阅，随时可跑。
+
+`host-sim` 会真的启动一次 mihomo 并临时接管该进程的出站流量，跑完自动回收。
+
+> 跑 `host-sim` 之前先把界面上的开关关掉：它会清理 `$DSH_HOME/api-proxy/mihomo.pid` 里的孤儿进程，而那个文件属于正在运行的核心。
+
+`nanocore-sim` 需要「专属节点」那套前提（装有客户端 + Python 3 + 可用订阅）；
+它的产物**只写进仓库下的 `.verify-nanocore/`**，跑完即删 —— 刻意不碰
+`$DSH_HOME/api-proxy/`，免得验证脚本覆盖你正在用的 nanocore 状态和 pid 文件。
+
+## 数据目录
+
+`$DSH_HOME/api-proxy/`
+
+| 文件 | 内容 |
+|---|---|
+| `mihomo.exe` | 核心 |
+| `config.yaml` | 每次启动时按订阅重新生成 |
+| `subscription.yaml` | 订阅原文缓存 |
+| `nodes.json` | 节点/分组清单缓存 |
+| `mihomo.log` | 核心日志 |
+| `mihomo.pid` | 用于回收被强杀留下的孤儿进程 |
+| `nanocore/` | 专属节点内核的工作目录（配置由插件现生成） |
+| `nanocore.log` | 专属节点内核日志 —— 起不来时先看这里 |
+| `nanocore.pid` | 同一个用途，针对 nanocore |
+| `nano.key` | **可选**：密钥文件（`{"key":"…","iv":"…"}`），不想写在设置里就放这儿 |
+
+## 许可
+
+MIT。mihomo 是独立的第三方二进制（GPL-3.0），不在本仓库内分发，由插件在首次使用时下载。
+
+「专属节点」功能使用的是**用户本机已安装的**客户端所带的内核，本仓库同样不分发它。
