@@ -1,0 +1,9 @@
+# 仓库里一律 LF。插件代码要在 Windows 上跑，但 CI（ubuntu）与 zip 打包
+# 都按 POSIX 换行更稳；Node 与 mihomo 都不在乎 CRLF，反过来 shell 会在乎。
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.exe binary
+*.zip binary
