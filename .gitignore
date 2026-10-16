@@ -1,0 +1,46 @@
+node_modules/
+dist/
+*.log
+
+# 运行时产生的本地数据（正常情况下不会出现在这里，防手滑）
+mihomo.exe
+mihomo
+config.yaml
+subscription.yaml
+nodes.json
+mihomo.pid
+mihomo.zip
+
+# nanocore 的运行时数据，以及验证脚本的临时目录。
+# 注意：**不能写 `nanocore/`** —— 那条会连源码目录 `lib/nanocore/` 一起忽略掉。
+# 运行时数据在 `$DSH_HOME/api-proxy/nanocore/`，本来就不在仓库里，这里只是防手滑。
+nanocore.log
+nanocore.pid
+nanocore-config.json
+.verify-nanocore/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python 字节码（py_compile 会留下）
+__pycache__/
+*.pyc
+
+# 发版时由 scripts/release-notes.mjs 生成
+release-notes.md
+
+# 公开发布的构建产物（scripts/build-public.mjs 的输出）
+.build-public/
+.build-public-git/
+
+# 千万别把订阅地址提交上来
+.env
+.env.*
+
+# 也千万别把密钥提交上来 —— 它属于「本机配置」，不属于仓库
+nano.key
+*.key.json

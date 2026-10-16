@@ -1,0 +1,50 @@
+name: release
+
+# 这是**公开发布版**的 workflow（由源码仓库的 scripts/build-public.mjs 生成）。
+#
+# 与源码仓库那份的区别：这里**不跑 verify/** —— 那批验证脚本不在公开发布物里。
+# 发版前的完整验证在源码仓库跑，跑绿了才构建。
+#
+# 去掉测试步骤不是偷懒：公开产物里的 JS 已经混淆，测试本来也没法对着它跑
+# （少量能跑的用例在源码仓库里跑，结果一样）。
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 打包
+        run: |
+          mkdir -p dist
+          zip -r "dist/dsh-api-proxy-${GITHUB_REF_NAME}.zip" . \
+            -x '.git/*' 'dist/*' '.github/*' 'node_modules/*' '*.log'
+
+      # Release 正文用 CHANGELOG 里对应的那一节。
+      - name: 取 CHANGELOG 说明
+        run: node scripts/release-notes.mjs
+
+      - name: 发布
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f release-notes.md ]; then
+            gh release create "${GITHUB_REF_NAME}" dist/*.zip \
+              --title "${GITHUB_REF_NAME}" \
+              --notes-file release-notes.md
+          else
+            gh release create "${GITHUB_REF_NAME}" dist/*.zip \
+              --title "${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi
