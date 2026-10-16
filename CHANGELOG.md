@@ -12,6 +12,32 @@
 
 ---
 
+## [1.0.4] - 2026-10-16
+
+设置页顶部显示**插件版本号**，省得再靠猜或翻 `package.json` 判断装的是哪一版。
+
+### 新增
+
+- 设置 → API 代理 顶部右侧显示 `v1.0.4`，鼠标悬停有完整提示。
+
+### 一个差点埋进去的坑
+
+版本一开始是**运行时读 `package.json`** 的（`readFileSync(new URL('../package.json', import.meta.url))`），
+在源码仓库里跑得好好的 —— 但**混淆产物里 `import.meta` 会被 javascript-obfuscator
+破坏掉**（实测产物里 grep 不到 `import.meta`）。也就是说：本地开发看着一切正常，
+**发到用户手里版本会退化成 `0.0.0`**。
+
+改成走 `lib/version.js` 里的**字面量**：混淆动得了函数名和字符串拼接，动不了这个
+导出值（已实测产物里 `PLUGIN_VERSION === "1.0.4"`）。
+
+两处版本号（`package.json` 与 `lib/version.js`）怎么保证一致：
+
+1. `scripts/build-public.mjs` 在混淆**之前**按 `package.json` 覆写 —— 发出去的
+   产物版本一定对，且不一致时会把话打出来；
+2. `verify/client-sim.mjs` 有一条断言，源仓库里两者必须一致，只改一处跑测试就红。
+
+---
+
 ## [1.0.3] - 2026-10-16
 
 修「填完订阅地址点保存，地址从输入框里消失了」。
